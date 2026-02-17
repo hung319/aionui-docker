@@ -5,63 +5,42 @@ RUN apk add --no-cache jq && \
     curl -s https://api.github.com/repos/iOfficeAI/AionUi/releases/latest \
     | jq -r '.assets[].browser_download_url | select(contains("deb"))' > /tmp/urls.txt
 
-# Stage 2: Cấu hình Debian Stable + NVM + AionUi (All Root)
-FROM debian:stable
+# Stage 2: Cấu hình trên Debian Stable Slim
+FROM debian:stable-slim
 
 ARG TARGETARCH
 ENV DEBIAN_FRONTEND=noninteractive
-ENV NVM_DIR=/root/.nvm
-ENV NODE_VERSION=20.11.1
 
-# 1. Cài đặt dependencies hệ thống và thư viện UI
+# 1. Cài đặt Node.js, NPM và các công cụ từ repo mặc định của Debian
 RUN apt-get update && apt-get install -y --no-install-recommends \
+    nodejs \
+    npm \
     curl \
     wget \
-    ca-certificates \
     git \
-    libgtk-3-0 \
-    libnss3 \
-    libasound2 \
-    libgbm1 \
-    libxshmfence1 \
-    libx11-xcb1 \
-    libxcomposite1 \
-    libxdamage1 \
-    libxrandr2 \
-    libatk1.0-0 \
-    libcups2 \
+    ca-certificates \
     && rm -rf /var/lib/apt/lists/*
 
-# 2. Cài đặt nvm và Node.js cho root
-RUN curl -o- https://raw.githubusercontent.com/nvm-sh/nvm/v0.39.7/install.sh | bash \
-    && . $NVM_DIR/nvm.sh \
-    && nvm install $NODE_VERSION \
-    && nvm alias default $NODE_VERSION \
-    && nvm use default
-
-# Thêm Node.js vào PATH
-ENV PATH="/root/.nvm/versions/node/v${NODE_VERSION}/bin:${PATH}"
-
-# 3. Tải và cài đặt AionUi bản mới nhất
+# 2. Cài đặt AionUi và tự động xử lý các thư viện phụ thuộc (dependencies)
 COPY --from=fetcher /tmp/urls.txt /tmp/urls.txt
 RUN set -ex; \
     ARCH_SUFFIX=$([ "$TARGETARCH" = "arm64" ] && echo "arm64" || echo "amd64"); \
     DOWNLOAD_URL=$(grep "$ARCH_SUFFIX" /tmp/urls.txt); \
-    echo "Installing AionUi for $ARCH_SUFFIX from $DOWNLOAD_URL"; \
+    echo "Downloading AionUi from: $DOWNLOAD_URL"; \
     wget -O /tmp/aionui.deb "$DOWNLOAD_URL" && \
     apt-get update && \
-    apt-get install -y /tmp/aionui.deb && \
+    # Cài đặt file .deb và tự động tải các thư viện UI còn thiếu (libgtk, libnss, etc.)
+    apt-get install -y /tmp/aionui.deb || apt-get install -y -f && \
     rm /tmp/aionui.deb && \
     rm -rf /var/lib/apt/lists/*
 
-# 4. Cấu hình môi trường WebUI
+# 3. Cấu hình môi trường chạy
 WORKDIR /root/app
 ENV AIONUI_PORT=3000
 ENV AIONUI_ALLOW_REMOTE=true
 
 EXPOSE 3000
 
-# Khởi chạy trực tiếp (Root không cần sudo)
+# Khởi chạy quyền root (bắt buộc --no-sandbox)
 ENTRYPOINT ["AionUi"]
-# Lưu ý: --no-sandbox là bắt buộc khi chạy quyền root trong container
 CMD ["--no-sandbox", "--webui", "--remote", "--port", "3000"]
