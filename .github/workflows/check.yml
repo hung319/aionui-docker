@@ -1,0 +1,67 @@
+name: Check AionUi Release
+
+on:
+  schedule:
+    - cron: '0 */6 * * *' # Kiểm tra định kỳ mỗi 6 tiếng
+  workflow_dispatch:      # Nút bấm chạy thủ công để test
+
+jobs:
+  check-version:
+    runs-on: ubuntu-latest
+    permissions:
+      contents: write
+      actions: write
+
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@v4
+
+      - name: Get latest release from AionUi
+        id: get_release
+        run: |
+          # Lấy tag_name từ API GitHub của AionUi
+          LATEST_RELEASE=$(curl -s https://api.github.com/repos/iOfficeAI/AionUi/releases/latest | jq -r .tag_name)
+          if [ "$LATEST_RELEASE" == "null" ] || [ -z "$LATEST_RELEASE" ]; then 
+            echo "Lỗi: Không lấy được thông tin release từ GitHub API"; exit 1; 
+          fi
+          echo "latest_release=$LATEST_RELEASE" >> $GITHUB_OUTPUT
+          echo "Phiên bản mới nhất trên iOfficeAI/AionUi: $LATEST_RELEASE"
+
+      - name: Compare with last checked version
+        id: check_new
+        run: |
+          touch last_release.txt
+          LAST_RELEASE=$(cat last_release.txt)
+          CURRENT_RELEASE="${{ steps.get_release.outputs.latest_release }}"
+          TIMESTAMP=$(date +'%Y-%m-%d %H:%M:%S')
+          
+          if [ "$LAST_RELEASE" != "$CURRENT_RELEASE" ]; then
+            echo "has_update=true" >> $GITHUB_OUTPUT
+            echo "$CURRENT_RELEASE" > last_release.txt
+            # Ghi log kèm mốc thời gian vào kq.txt (Append - nối thêm)
+            echo "[$TIMESTAMP] PHÁT HIỆN BẢN MỚI: $CURRENT_RELEASE" >> kq.txt
+          else
+            echo "has_update=false" >> $GITHUB_OUTPUT
+            echo "[$TIMESTAMP] Không có thay đổi. Hiện tại vẫn là: $LAST_RELEASE" >> kq.txt
+            echo "Không có bản cập nhật mới."
+          fi
+
+      - name: Push result file and update last_release
+        # Nếu muốn log lại mọi lần check (kể cả không có update) thì bỏ dòng if ở dưới
+        if: steps.check_new.outputs.has_update == 'true'
+        run: |
+          git config --global user.name "github-actions[bot]"
+          git config --global user.email "github-actions[bot]@users.noreply.github.com"
+          
+          git add last_release.txt kq.txt
+          git commit -m "AionBot: Phát hiện bản release mới ${{ steps.get_release.outputs.latest_release }}"
+          git push
+
+      - name: Trigger main.yml workflow
+        if: steps.check_new.outputs.has_update == 'true'
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        run: |
+          echo "Đang kích hoạt file main.yml để bắt đầu build Docker..."
+          # Đảm bảo file main.yml của bạn có on: workflow_dispatch
+          gh workflow run main.yml
