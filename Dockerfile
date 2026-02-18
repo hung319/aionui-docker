@@ -55,7 +55,7 @@ RUN set -ex; \
     rm -rf /var/lib/apt/lists/*
 
 # 4. Cấu hình môi trường WebUI
-WORKDIR /root/app
+WORKDIR /root
 ENV AIONUI_PORT=3000
 ENV AIONUI_ALLOW_REMOTE=true
 
